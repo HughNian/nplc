@@ -1,19 +1,26 @@
 /*
-  +----------------------------------------------------------------------+
-  | PHP Version 7                                                        |
-  +----------------------------------------------------------------------+
-  | Copyright (c) 1997-2016 The PHP Group                                |
-  +----------------------------------------------------------------------+
-  | This source file is subject to version 3.01 of the PHP license,      |
-  | that is bundled with this package in the file LICENSE, and is        |
-  | available through the world-wide-web at the following url:           |
-  | http://www.php.net/license/3_01.txt                                  |
-  | If you did not receive a copy of the PHP license and are unable to   |
-  | obtain it through the world-wide-web, please send a note to          |
-  | license@php.net so we can mail you a copy immediately.               |
-  +----------------------------------------------------------------------+
-  | Author: niansong                                                     |
-  +----------------------------------------------------------------------+
++----------------------------------------------------------------------+
+| PHP Version 7                                                        |
++----------------------------------------------------------------------+
+| Copyright (c) 1997-2016 The PHP Group                                |
++----------------------------------------------------------------------+
+| This source file is subject to version 3.01 of the PHP license,      |
+| that is bundled with this package in the file LICENSE, and is        |
+| available through the world-wide-web at the following url:           |
+| http://www.php.net/license/3_01.txt                                  |
+| If you did not receive a copy of the PHP license and are unable to   |
+| obtain it through the world-wide-web, please send a note to          |
+| license@php.net so we can mail you a copy immediately.               |
++----------------------------------------------------------------------+
+| Author: niansong                                                     |
++----------------------------------------------------------------------+
+`____``_____`````````__``````````
+|_```\|_```_|```````[``|`````````
+``|```\`|`|``_`.--.``|`|``.---.``
+``|`|\`\|`|`[`'/'`\`\|`|`/`/'`\]`
+`_|`|_\```|_`|`\__/`||`|`|`\__.``
+|_____|\____||`;.__/[___]'.___.'`
+````````````[__|`````````````````
 */
 
 /* $Id$ */
@@ -55,6 +62,12 @@ ZEND_BEGIN_ARG_INFO_EX(arginfo_nplc_getter, 0, 0, 1)
 	ZEND_ARG_INFO(0, key)
 ZEND_END_ARG_INFO()
 
+ZEND_BEGIN_ARG_INFO_EX(arginfo_nplc_delete, 0, 0, 1)
+	ZEND_ARG_INFO(0, key)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_INFO_EX(arginfo_nplc_void, 0, 0, 0)
+ZEND_END_ARG_INFO()
 /* }}} */
 
 /* True global resources - no need for thread safety here */
@@ -434,6 +447,50 @@ nplc_get_multi(zend_string *prefix, zval *keys, zval *rv)
 	return rv;
 }
 
+void
+nplc_delete(char *prefix, uint32_t prefix_len, char *key, uint32_t len)
+{
+	char buf[KEY_MAX_LEN];
+
+	if ((len + prefix_len) > KEY_MAX_LEN) {
+		php_error_docref(NULL, E_WARNING, "Key%s can not be longer than %d bytes",
+				prefix_len ? "(include prefix)" : "", KEY_MAX_LEN);
+		return;
+	}
+
+	if (prefix_len) {
+		len = snprintf(buf, sizeof(buf), "%s%s", prefix, key);
+		key = (char *)buf;
+	}
+
+	npl_delete_data(key, len);
+}
+
+void
+nplc_delete_multi(char *prefix, uint32_t prefix_len, zval *keys)
+{
+	zval *value;
+	HashTable *ht = Z_ARRVAL_P(keys);
+
+	ZEND_HASH_FOREACH_VAL(ht, value) {
+		switch (Z_TYPE_P(value)) {
+			case IS_STRING:
+				nplc_delete(prefix, prefix_len, Z_STRVAL_P(value), Z_STRLEN_P(value));
+				continue;
+			default:
+				{
+					zval copy;
+					zend_make_printable_zval(value, &copy);
+					nplc_delete(prefix, prefix_len, Z_STRVAL(copy), Z_STRLEN(copy));
+					zval_dtor(&copy);
+				}
+				continue;
+		}
+	} ZEND_HASH_FOREACH_END();
+
+	return;
+}
+
 /** {{{ proto public Nplc::__construct([string $prefix]) */
 PHP_METHOD(nplc, __construct) {
 	zend_string *prefix = NULL;
@@ -534,6 +591,69 @@ PHP_METHOD(nplc, get) {
 }
 /* }}} */
 
+/** {{{ proto public Nplc::delete(mixed $keys)
+*/
+PHP_METHOD(nplc, delete) {
+	zval *keys, rv, *prefix;
+	char *sprefix = NULL;
+	uint32_t prefix_len;
+
+	if (!NPLC_G(enable)) {
+		RETURN_FALSE;
+	}
+
+   /**
+    * todo 延迟删除
+ 	if (zend_parse_parameters(ZEND_NUM_ARGS(), "z|l", &keys, &time) == FAILURE) {
+		return;
+	}*/
+
+	if (zend_parse_parameters(ZEND_NUM_ARGS(), "z", &keys) == FAILURE) {
+		return;
+	}
+
+	prefix  = zend_read_property(nplc_class_ce, getThis(), ZEND_STRL(NPLC_CLASS_PROPERTY_PREFIX), 0, &rv);
+	sprefix = Z_STRVAL_P(prefix);
+	prefix_len = Z_STRLEN_P(prefix);
+
+	if (Z_TYPE_P(keys) == IS_ARRAY) {
+		nplc_delete_multi(sprefix, prefix_len, keys);
+	} else if (Z_TYPE_P(keys) == IS_STRING) {
+		nplc_delete(sprefix, prefix_len, Z_STRVAL_P(keys), Z_STRLEN_P(keys));
+	} else {
+		zval copy;
+		zend_make_printable_zval(keys, &copy);
+		nplc_delete(sprefix, prefix_len, Z_STRVAL(copy), Z_STRLEN(copy));
+		zval_dtor(&copy);
+	}
+
+	RETURN_TRUE;
+}
+/* }}} */
+
+/** {{{ proto public Nplc::info(void)
+*/
+PHP_METHOD(nplc, info) {
+	npl_cache_info *info;
+
+	if (!NPLC_G(enable)) {
+		RETURN_FALSE;
+	}
+
+	info = npl_info();
+
+	array_init(return_value);
+	add_assoc_long(return_value, "storage_size", info->storage_size);
+	add_assoc_long(return_value, "node_nums", info->node_nums);
+	add_assoc_long(return_value, "keys_nums", info->keys_nums);
+	add_assoc_long(return_value, "fail_nums", info->fail_nums);
+	add_assoc_long(return_value, "miss_nums", info->miss_nums);
+	add_assoc_long(return_value, "recycles_nums", info->recycles_nums);
+
+	npl_info_free(info);
+}
+/* }}} */
+
 /** {{{ nplc_methods */
 zend_function_entry nplc_methods[] = {
 	PHP_ME(nplc, __construct, arginfo_nplc_constructor, ZEND_ACC_PUBLIC|ZEND_ACC_CTOR)
@@ -542,9 +662,9 @@ zend_function_entry nplc_methods[] = {
 	//PHP_ME(nplc, __set, arginfo_nplc_setter, ZEND_ACC_PUBLIC)
 	PHP_ME(nplc, get, arginfo_nplc_getter, ZEND_ACC_PUBLIC)
 	//PHP_ME(nplc, __get, arginfo_nplc_getter, ZEND_ACC_PUBLIC)
-	//PHP_ME(nplc, delete, arginfo_nplc_delete, ZEND_ACC_PUBLIC)
+	PHP_ME(nplc, delete, arginfo_nplc_delete, ZEND_ACC_PUBLIC)
 	//PHP_ME(nplc, flush, arginfo_nplc_void, ZEND_ACC_PUBLIC)
-	//PHP_ME(nplc, info, arginfo_nplc_void, ZEND_ACC_PUBLIC)
+	PHP_ME(nplc, info, arginfo_nplc_void, ZEND_ACC_PUBLIC)
 	{NULL, NULL, NULL}
 };
 /* }}} */

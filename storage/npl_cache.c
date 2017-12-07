@@ -14,6 +14,13 @@
 +----------------------------------------------------------------------+
 | Author: niansong                                                     |
 +----------------------------------------------------------------------+
+`____``_____`````````__``````````
+|_```\|_```_|```````[``|`````````
+``|```\`|`|``_`.--.``|`|``.---.``
+``|`|\`\|`|`[`'/'`\`\|`|`/`/'`\]`
+`_|`|_\```|_`|`\__/`||`|`|`\__.``
+|_____|\____||`;.__/[___]'.___.'`
+````````````[__|`````````````````
 */
 
 #include "storage/npl_cache.h"
@@ -458,12 +465,16 @@ npl_find_data(const char *key, unsigned int k_len, unsigned int *size, unsigned 
 do_find:
     		v = k->value;
     		if(v){
+    			if(v->v_size <= 0 || NULL == v->data) goto miss;
+
     			*flag = k->flag;
     			*size = v->v_size;
 
     			return_data = USER_ALLOC(v->v_size);
     			memcpy(return_data, (char *)v->data, v->v_size);
     			//return_data = strdup(v->data);
+    		} else {
+    			goto miss;
     		}
     	} else {
     		//double hash
@@ -476,7 +487,7 @@ do_find:
         		index = h & NPL_CACHE(total_mask);
         		k = NPL_CACHE(keys)[index];
 
-        		if(k == NULL) {
+        		if(NULL == k) {
         			goto miss;
         		} else if(k->hash == h && k->index == index && !memcmp(k->key, key, k_len)) {
         			goto do_find;
@@ -496,6 +507,47 @@ miss:
     }
 }
 
+void
+npl_delete_data(const char *key, unsigned int k_len)
+{
+	unsigned long h;
+	unsigned int  index;
+    npl_kv_key *k;
+    npl_kv_value *v;
+
+    h = hash_func(key, k_len);
+    index = h & NPL_CACHE(total_mask);
+    k = NPL_CACHE(keys)[index];
+
+    if(k){
+    	if(k->hash == h && k->index == index && !memcmp(k->key, key, k_len)){
+    		k->over_time = 1;
+    		//todo 延迟多少时间删除
+    		return;
+    	} else {
+    		//double hash
+			uint i;
+			ulong seed;
+			seed = hash_func2(key, k_len);
+
+			for(i = 0; i < 3; i++){
+				h += seed & NPL_CACHE(total_mask);
+				index = h & NPL_CACHE(total_mask);
+				k = NPL_CACHE(keys)[index];
+
+				if(NULL == k){
+					return;
+				} else if(k->hash == h && k->index == index && !memcmp(k->key, key, k_len)) {
+					k->over_time = 1;
+					return;
+				}
+			}
+    	}
+    }
+
+    return;
+}
+
 npl_cache_info *
 npl_info(void)
 {
@@ -511,4 +563,11 @@ npl_info(void)
 	info->recycles_nums = storage.recyle;
 
 	return info;
+}
+
+void
+npl_info_free(npl_cache_info *info)
+{
+	free(info);
+	return;
 }
