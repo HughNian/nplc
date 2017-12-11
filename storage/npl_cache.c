@@ -270,9 +270,10 @@ npl_shutdown(void)
 }
 
 int
-npl_update_data(const char *key, unsigned int k_len, char *data, unsigned int d_len, unsigned int flag, char **msg)
+npl_update_data(const char *key, unsigned int k_len, char *data, unsigned int d_len, unsigned int flag, char **msg, unsigned long time_val)
 {
 	unsigned long h;
+	unsigned long now_time;
 	unsigned int index;
 	npl_node *node;
 	npl_kv_key *k;
@@ -310,47 +311,60 @@ npl_update_data(const char *key, unsigned int k_len, char *data, unsigned int d_
 	index = h & NPL_CACHE(total_mask);
 	k = NPL_CACHE(keys)[index];
 
+	now_time = time(NULL);
+
 	if(k) {
         if(k->hash == h && k->k_len == k_len && !memcmp((char *)k->key, key, k_len)){
 do_update_op:
-        	k->flag = flag;
-        	k->over_time = time(NULL);
         	if(k->value){
         		if(k->crc == npl_crc32(data, data_size)){ //real equally
-        			v = k->value;
-        			switch(k->type){
-        				case 0:
-        					if(v->v_size >= data_size){
-do_update:
-								memset((char *)v->data, 0, v->v_size);
-								memcpy((char *)v->data, data, data_size);
+        			//如果完全相同的key相同的data没有超时则直接返回成功
+        			if(k->over_time > now_time){
+        				return 1;
+        			} else {
+        				k->flag = flag;
+        				if(time_val){
+        					k->over_time = now_time + time_val;
+        				} else {
+        					k->over_time = time_val;
+        				}
+						k->add_time  = now_time;
 
-								v->v_size = data_size;
-								v->v_len  = d_len;
-								return 1;
-							} else if(v->v_size < data_size && data_size < NODE_MAX_DATA_SIZE) {
-								goto do_update;
-							} else {
-								goto do_add;
-							}
-        					break;
-        				case 1:
-        					if(v->v_size >= data_size){
-        						goto do_update;
-        					} else {
-        						v = realloc(v, sizeof(npl_kv_value) + data_size);
-        						if(NULL == v){
-        							*msg = "value realloc error";
-        							NPL_CACHE(fails)++;
-        							return 0;
-        						}
-        						memset((char *)v->data, 0, data_size);
-        						memcpy((char *)v->data, data, data_size);
-        						v->v_size = data_size;
-        						v->v_len  = d_len;
-        						return 1;
-        					}
-        					break;
+	        			v = k->value;
+	        			switch(k->type){
+	        				case 0:
+	        					if(v->v_size >= data_size){
+do_update:
+									memset((char *)v->data, 0, v->v_size);
+									memcpy((char *)v->data, data, data_size);
+
+									v->v_size = data_size;
+									v->v_len  = d_len;
+									return 1;
+								} else if(v->v_size < data_size && data_size < NODE_MAX_DATA_SIZE) {
+									goto do_update;
+								} else {
+									goto do_add;
+								}
+	        					break;
+	        				case 1:
+	        					if(v->v_size >= data_size){
+	        						goto do_update;
+	        					} else {
+	        						v = realloc(v, sizeof(npl_kv_value) + data_size);
+	        						if(NULL == v){
+	        							*msg = "value realloc error";
+	        							NPL_CACHE(fails)++;
+	        							return 0;
+	        						}
+	        						memset((char *)v->data, 0, data_size);
+	        						memcpy((char *)v->data, data, data_size);
+	        						v->v_size = data_size;
+	        						v->v_len  = d_len;
+	        						return 1;
+	        					}
+	        					break;
+	        			}
         			}
         		} else {
         			goto do_add;
@@ -403,7 +417,12 @@ do_add:
 
 		k->type   = node->type;
 		k->flag   = flag;
-		k->over_time = time(NULL);
+		if(time_val){
+			k->over_time = now_time + time_val;
+		} else {
+			k->over_time = time_val;
+		}
+		k->add_time  = now_time;
 		k->k_size = key_size;
 		k->k_len  = k_len;
 		k->index  = index;
@@ -443,23 +462,24 @@ do_add:
 char *
 npl_find_data(const char *key, unsigned int k_len, unsigned int *size, unsigned int *flag)
 {
-	char *return_data = NULL;
+	int expire;
+	unsigned long now_time;
 	unsigned long h;
 	unsigned int  index;
+	char *return_data = NULL;
     npl_kv_key *k;
     npl_kv_value *v;
-    time_t now;
-    int expire;
 
     h = hash_func(key, k_len);
     index = h & NPL_CACHE(total_mask);
     k = NPL_CACHE(keys)[index];
 
     if(k){
-    	//超时处理
-    	now = time(NULL);
-    	expire = now - k->over_time;
-    	if(expire >= 86400) goto miss;
+    	//过期处理
+    	if(k->over_time){
+    		now_time = time(NULL);
+			if(k->over_time <= now_time) goto miss;
+    	}
 
     	if(k->hash == h && k->index == index && !memcmp(k->key, key, k_len)){
 do_find:
@@ -559,6 +579,7 @@ npl_info(void)
 	info->node_nums     = storage.total;
 	info->keys_nums     = NPL_CACHE(nums);
 	info->fail_nums     = NPL_CACHE(fails);
+	info->hits_nums     = NPL_CACHE(hits);
 	info->miss_nums     = NPL_CACHE(miss);
 	info->recycles_nums = storage.recyle;
 

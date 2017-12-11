@@ -53,9 +53,10 @@ ZEND_BEGIN_ARG_INFO_EX(arginfo_nplc_constructor, 0, 0, 0)
 	ZEND_ARG_INFO(0, prefix)
 ZEND_END_ARG_INFO()
 
-ZEND_BEGIN_ARG_INFO_EX(arginfo_nplc_setter, 0, 0, 2)
+ZEND_BEGIN_ARG_INFO_EX(arginfo_nplc_setter, 0, 0, 1)
 	ZEND_ARG_INFO(0, keys)
 	ZEND_ARG_INFO(0, value)
+	ZEND_ARG_INFO(0, tv)
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_INFO_EX(arginfo_nplc_getter, 0, 0, 1)
@@ -126,7 +127,7 @@ const zend_function_entry nplc_functions[] = {
 #endif
 
 static int
-nplc_add(zend_string *prefix, zend_string *key, zval *value)
+nplc_add(zend_string *prefix, zend_string *key, zval *value, unsigned long tv)
 {
     int ret = 0;
     unsigned int flag = Z_TYPE_P(value);
@@ -148,13 +149,13 @@ nplc_add(zend_string *prefix, zend_string *key, zval *value)
     	case IS_NULL:
     	case IS_TRUE:
     	case IS_FALSE:
-    		ret = npl_update_data(ZSTR_VAL(key), ZSTR_LEN(key), Z_STRVAL_P(value), Z_STRLEN_P(value), flag, &msg);
+    		ret = npl_update_data(ZSTR_VAL(key), ZSTR_LEN(key), Z_STRVAL_P(value), Z_STRLEN_P(value), flag, &msg, tv);
     		break;
     	case IS_LONG:
-    		ret = npl_update_data(ZSTR_VAL(key), ZSTR_LEN(key), (char *)&(Z_LVAL_P(value)), sizeof(long), flag, &msg);
+    		ret = npl_update_data(ZSTR_VAL(key), ZSTR_LEN(key), (char *)&(Z_LVAL_P(value)), sizeof(long), flag, &msg, tv);
     		break;
     	case IS_DOUBLE:
-    		ret = npl_update_data(ZSTR_VAL(key), ZSTR_LEN(key), (char *)&Z_DVAL_P(value), sizeof(double), flag, &msg);
+    		ret = npl_update_data(ZSTR_VAL(key), ZSTR_LEN(key), (char *)&Z_DVAL_P(value), sizeof(double), flag, &msg, tv);
     		break;
     	case IS_STRING:
     	case IS_CONSTANT:
@@ -184,10 +185,10 @@ nplc_add(zend_string *prefix, zend_string *key, zval *value)
 
     				flag |= NPLC_ENTRY_COMPRESSED;
     				flag |= (Z_STRLEN_P(value) << NPLC_ENTRY_ORIG_LEN_SHIT);
-    				ret = npl_update_data(ZSTR_VAL(key), ZSTR_LEN(key), compressed, compressed_len, flag, &msg);
+    				ret = npl_update_data(ZSTR_VAL(key), ZSTR_LEN(key), compressed, compressed_len, flag, &msg, tv);
     				efree(compressed);
     			} else {
-					ret = npl_update_data(ZSTR_VAL(key), ZSTR_LEN(key), Z_STRVAL_P(value), Z_STRLEN_P(value), flag, &msg);
+					ret = npl_update_data(ZSTR_VAL(key), ZSTR_LEN(key), Z_STRVAL_P(value), Z_STRLEN_P(value), flag, &msg, tv);
     			}
     		}
     		break;
@@ -226,10 +227,10 @@ nplc_add(zend_string *prefix, zend_string *key, zval *value)
 
 						flag |= NPLC_ENTRY_COMPRESSED;
 						flag |= (buf.s->len << NPLC_ENTRY_ORIG_LEN_SHIT);
-						ret = npl_update_data(ZSTR_VAL(key), ZSTR_LEN(key), compressed, compressed_len, flag, &msg);
+						ret = npl_update_data(ZSTR_VAL(key), ZSTR_LEN(key), compressed, compressed_len, flag, &msg, tv);
 						efree(compressed);
 					} else {
-						ret = npl_update_data(ZSTR_VAL(key), ZSTR_LEN(key), ZSTR_VAL(buf.s), ZSTR_LEN(buf.s), flag, &msg);
+						ret = npl_update_data(ZSTR_VAL(key), ZSTR_LEN(key), ZSTR_VAL(buf.s), ZSTR_LEN(buf.s), flag, &msg, tv);
 					}
 					smart_str_free(&buf);
 				} else {
@@ -255,7 +256,7 @@ nplc_add(zend_string *prefix, zend_string *key, zval *value)
 }
 
 static int
-nplc_add_multi(zend_string *prefix, zval *kvs)
+nplc_add_multi(zend_string *prefix, zval *kvs, unsigned long tv)
 {
 	HashTable *ht = Z_ARRVAL_P(kvs);
 	zend_string *key;
@@ -269,7 +270,7 @@ nplc_add_multi(zend_string *prefix, zval *kvs)
 				should_free = 1;
 			}
 
-			if (nplc_add(prefix, key, value)) {
+			if (nplc_add(prefix, key, value, tv)) {
 				if (should_free) {
 					zend_string_release(key);
 				}
@@ -515,7 +516,7 @@ PHP_METHOD(nplc, __construct) {
 /** {{{ proto public Nplc::set(mixed $keys, mixed $value)
 */
 PHP_METHOD(nplc, set) {
-    long ttl = 0;
+    unsigned long tv = 0;
 	zval rv, *keys, *prefix, *value = NULL;
 	uint32_t ret;
 
@@ -534,6 +535,20 @@ PHP_METHOD(nplc, set) {
 				return;
 			}
 			if (Z_TYPE_P(keys) == IS_ARRAY) {
+				if (Z_TYPE_P(value) == IS_LONG) {
+					tv = Z_LVAL_P(value);
+					value = NULL;
+				} else {
+					php_error_docref(NULL, E_WARNING, "tv parameter must be an integer");
+					return;
+				}
+			}
+			break;
+		case 3:
+			if (zend_parse_parameters(ZEND_NUM_ARGS(), "zzl", &keys, &value, &tv) == FAILURE) {
+				return;
+			}
+			if (Z_TYPE_P(keys) == IS_ARRAY) {
 				value = NULL;
 			}
 			break;
@@ -544,13 +559,13 @@ PHP_METHOD(nplc, set) {
 	prefix = zend_read_property(nplc_class_ce, getThis(), ZEND_STRL(NPLC_CLASS_PROPERTY_PREFIX), 0, &rv);
 
 	if (Z_TYPE_P(keys) == IS_ARRAY) {
-		ret = nplc_add_multi(Z_STR_P(prefix), keys);
+		ret = nplc_add_multi(Z_STR_P(prefix), keys, tv);
 	} else if (Z_TYPE_P(keys) == IS_STRING) {
-		ret = nplc_add(Z_STR_P(prefix), Z_STR_P(keys), value);
+		ret = nplc_add(Z_STR_P(prefix), Z_STR_P(keys), value, tv);
 	} else {
 		zval copy;
 		zend_make_printable_zval(keys, &copy);
-		ret = nplc_add(Z_STR_P(prefix), Z_STR(copy), value);
+		ret = nplc_add(Z_STR_P(prefix), Z_STR(copy), value, tv);
 		zval_dtor(&copy);
 	}
 
@@ -647,6 +662,7 @@ PHP_METHOD(nplc, info) {
 	add_assoc_long(return_value, "node_nums", info->node_nums);
 	add_assoc_long(return_value, "keys_nums", info->keys_nums);
 	add_assoc_long(return_value, "fail_nums", info->fail_nums);
+	add_assoc_long(return_value, "hits_nums", info->hits_nums);
 	add_assoc_long(return_value, "miss_nums", info->miss_nums);
 	add_assoc_long(return_value, "recycles_nums", info->recycles_nums);
 

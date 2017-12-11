@@ -32,8 +32,8 @@
 
 ### Nplc::set
 ```
-   Nplc::set($key, $value[, $ttl])
-   Nplc::set(array $kvs[, $ttl])
+   Nplc::set($key, $value[, $tv]) //$tv 选填项超时时间
+   Nplc::set(array $kvs[, $tv])   //$tv 选填项超时时间
 ```
    Store a value into Nplc cache. 
 ```php
