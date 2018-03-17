@@ -97,15 +97,16 @@ typedef struct {
 	unsigned int  index;
 	unsigned long hash;
 	unsigned long crc;
-	time_t over_time;
+	unsigned long over_time;
+	unsigned long add_time;
 	char key[KEY_MAX_LEN];
     npl_kv_value *value;
 } npl_kv_key;
 
 typedef struct {
 	uint32_t nums; //keys hash nums
-	uint32_t hits;
-	uint32_t miss;
+	uint64_t hits;
+	uint64_t miss;
 	uint32_t fails;
 	uint32_t total;
 	uint32_t total_mask;
@@ -115,11 +116,12 @@ typedef struct {
 
 typedef struct {
 	size_t storage_size;
-	unsigned int node_nums;
-	unsigned int keys_nums;
-	unsigned int fail_nums;
-	unsigned int miss_nums;
-	unsigned int recycles_nums;
+	unsigned int  node_nums;
+	unsigned int  keys_nums;
+	unsigned int  fail_nums;
+	unsigned long hits_nums;
+	unsigned long miss_nums;
+	unsigned int  recycles_nums;
 } npl_cache_info;
 
 extern npl_cache *cache;
@@ -127,7 +129,7 @@ extern npl_cache *cache;
 
 int  npl_start(unsigned long storage_size);
 void npl_shutdown(void);
-int  npl_update_data(const char *key, unsigned int k_len, char *data, unsigned int d_len, unsigned int flag, char **msg);
+int  npl_update_data(const char *key, unsigned int k_len, char *data, unsigned int d_len, unsigned int flag, char **msg, unsigned long time_val);
 char *npl_find_data(const char *key, unsigned int k_len, unsigned int *size, unsigned int *flag);
 void npl_delete_data(const char *key, unsigned int k_len);
 int fastlz_data(const void *data, int len, void *output);
